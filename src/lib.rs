@@ -123,6 +123,7 @@ pub struct Pid<T: Number> {
     pub d_limit: T,
     /// Last calculated integral value if [Pid::ki] is used.
     integral_term: T,
+    integral_dampening_rate: T,
     /// Previously found measurement whilst using the [Pid::next_control_output] method.
     prev_measurement: Option<T>,
 }
@@ -179,6 +180,7 @@ where
             i_limit: T::zero(),
             d_limit: T::zero(),
             integral_term: T::zero(),
+            integral_dampening_rate: T::one(),
             prev_measurement: None,
         }
     }
@@ -229,7 +231,7 @@ where
         // just the error (no ki), because we support ki changing dynamically,
         // we store the entire term so that we don't need to remember previous
         // ki values.
-        self.integral_term = self.integral_term + error * self.ki;
+        self.integral_term = self.integral_term * self.integral_dampening_rate + error * self.ki;
 
         // Mitigate integral windup: Don't want to keep building up error
         // beyond what i_limit will allow.
@@ -262,6 +264,12 @@ where
     /// control output.
     pub fn reset_integral_term(&mut self) {
         self.integral_term = T::zero();
+    }
+
+    /// Sets the [Self::integral_dampening_rate] for this controller.
+    pub fn idr(&mut self, rate: impl Into<T>) -> &mut Self {
+        self.integral_dampening_rate = rate.into();
+        self
     }
 }
 
@@ -454,5 +462,23 @@ mod tests {
         assert_eq!(out.i, 10.0);
         assert_eq!(out.d, 0.0);
         assert_eq!(out.output, 10.0);
+    }
+
+    #[test]
+    fn dampening_integral() {
+        let mut pid: Pid<f64> = *Pid::new(10.0, 10.0).p(0.8, 10.0).i(0.1, 10.0).idr(0.9).d(0.1, 10.0);
+        let mut out = pid.next_control_output(10.0);
+
+        for _ in 0..10 {
+            // Accumulate integral error
+            pid.next_control_output(20.0);
+        }
+
+        for _ in 0..100 {
+            // Dampen integral in steady state
+            out = pid.next_control_output(10.0);
+        }
+
+        assert_eq!(out.output as i64, 0);
     }
 }
